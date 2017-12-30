@@ -268,6 +268,8 @@ namespace netfilter
 
 	static const char *default_game_version = "16.12.01";
 	static const uint8_t default_proto_version = 17;
+	static bool automatic_map_detection = true;
+	static std::string current_map_name = global::server->GetMapName( );
 	static bool player_spoofing_enabled = false;
 	static int player_spoof_count = 10;
 	static reply_info_t reply_info;
@@ -365,7 +367,12 @@ namespace netfilter
 		info_cache_packet.WriteByte( 'I' ); // packet type is always 'I'
 		info_cache_packet.WriteByte( default_proto_version );
 		info_cache_packet.WriteString( global::server->GetName( ) );
-		info_cache_packet.WriteString( global::server->GetMapName( ) );
+
+		if (automatic_map_detection) {
+			current_map_name = global::server->GetMapName( );
+		}
+		info_cache_packet.WriteString( current_map_name );
+
 		info_cache_packet.WriteString( reply_info.game_dir.c_str( ) );
 		info_cache_packet.WriteString( reply_info.game_desc.c_str( ) );
 
@@ -810,7 +817,20 @@ namespace netfilter
 		game_players.count = game_players.players.size();
 
 		return 0;
+	}
 
+	LUA_FUNCTION_STATIC( SetMapDetection )
+	{
+		LUA->CheckType( 1, GarrysMod::Lua::Type::BOOL );
+		automatic_map_detection = LUA->GetBool( 1 );
+		return 0;
+	}
+
+	LUA_FUNCTION_STATIC( SetMapName )
+	{
+		LUA->CheckType( 1, GarrysMod::Lua::Type::STRING );
+		current_map_name = LUA->GetString(1);
+		return 0;
 	}
 
 	inline packet_t GetSamplePacket( )
@@ -954,6 +974,12 @@ namespace netfilter
 
 		LUA->PushCFunction(AddPlayer);
 		LUA->SetField(-2, "AddPlayer");
+
+		LUA->PushCFunction(SetMapDetection);
+		LUA->SetField(-2, "SetMapDetection");
+
+		LUA->PushCFunction(SetMapName);
+		LUA->SetField(-2, "SetMapName");
 	}
 
 	void Deinitialize( GarrysMod::Lua::ILuaBase * )
