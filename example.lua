@@ -1,8 +1,11 @@
-require("spoof")
+require("serverquery")
 
-spoof.SetEnabled(true)
-spoof.SetPlayerCount(20)
+serverquery.SetPlayerSpoofing(true)
+serverquery.SetPlayerCount(20)
 
-spoof.ResetPlayers()
-spoof.AddPlayer("Matt", 10, 300);
-spoof.AddPlayer("Alex", 20, 100);
+serverquery.ResetPlayers()
+serverquery.AddPlayer("Omar", 10, 300)
+serverquery.AddPlayer("Alex", 20, 100)
+
+serverquery.SetMapDetection(false)
+serverquery.SetMapName("rp_cometpingpong")
