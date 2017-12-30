@@ -777,7 +777,7 @@ namespace netfilter
 	}
 
 
-	LUA_FUNCTION_STATIC( EnablePlayerSpoofing )
+	LUA_FUNCTION_STATIC( SetPlayerSpoofing )
 	{
 		LUA->CheckType( 1, GarrysMod::Lua::Type::BOOL );
 		player_spoofing_enabled = LUA->GetBool( 1 );
@@ -963,8 +963,8 @@ namespace netfilter
 
 		BuildStaticReplyInfo( );
 
-		LUA->PushCFunction( EnablePlayerSpoofing );
-		LUA->SetField( -2, "SetEnabled" );
+		LUA->PushCFunction( SetPlayerSpoofing );
+		LUA->SetField( -2, "SetPlayerSpoofing" );
 
 		LUA->PushCFunction( SetPlayerCount );
 		LUA->SetField( -2, "SetPlayerCount" );
