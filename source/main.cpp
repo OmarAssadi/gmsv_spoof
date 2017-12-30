@@ -71,14 +71,13 @@ namespace global
 
 	static void Initialize( GarrysMod::Lua::ILuaBase *LUA )
 	{
-		DebugMsg("[spoof]: Initialising player spoofer\n");
-		LUA->SetField( GarrysMod::Lua::INDEX_GLOBAL, "spoof" );
+		LUA->SetField( GarrysMod::Lua::INDEX_GLOBAL, "serverquery" );
 	}
 
 	static void Deinitialize( GarrysMod::Lua::ILuaBase *LUA )
 	{
 		LUA->PushNil( );
-		LUA->SetField( GarrysMod::Lua::INDEX_GLOBAL, "spoof" );
+		LUA->SetField( GarrysMod::Lua::INDEX_GLOBAL, "serverquery" );
 	}
 }
 

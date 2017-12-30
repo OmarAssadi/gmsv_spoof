@@ -332,7 +332,7 @@ namespace netfilter
 			if( file == nullptr )
 			{
 				reply_info.game_version = default_game_version;
-				DebugWarning( "[spoof] Error opening steam.inf\n" );
+				DebugWarning( "[serverquery] Error opening steam.inf\n" );
 				return;
 			}
 
@@ -342,7 +342,7 @@ namespace netfilter
 			if( failed )
 			{
 				reply_info.game_version = default_game_version;
-				DebugWarning( "[spoof] Failed reading steam.inf\n" );
+				DebugWarning( "[serverquery] Failed reading steam.inf\n" );
 				return;
 			}
 
@@ -501,7 +501,7 @@ namespace netfilter
 		if( len == 0 )
 		{
 			DebugWarning(
-				"[spoof] Bad OOB! len: %d from %s\n",
+				"[serverquery] Bad OOB! len: %d from %s\n",
 				len,
 				IPToString( from.sin_addr )
 			);
@@ -515,7 +515,7 @@ namespace netfilter
 		if( channel == -2 )
 		{
 			DebugWarning(
-				"[spoof] Bad OOB! len: %d, channel: 0x%X from %s\n",
+				"[serverquery] Bad OOB! len: %d, channel: 0x%X from %s\n",
 				len,
 				channel,
 				IPToString( from.sin_addr )
@@ -536,7 +536,7 @@ namespace netfilter
 				if( len > 100 )
 				{
 					DebugWarning(
-						"[spoof] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
+						"[serverquery] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
 						len,
 						channel,
 						type,
@@ -548,7 +548,7 @@ namespace netfilter
 				if( len >= 18 && strncmp( data + 5, "statusResponse", 14 ) == 0 )
 				{
 					DebugWarning(
-						"[spoof] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
+						"[serverquery] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
 						len,
 						channel,
 						type,
@@ -571,7 +571,7 @@ namespace netfilter
 			case 'q': // connection handshake init
 			case 'k': // steam auth packet
 				DebugMsg(
-					"[spoof] Good OOB! len: %d, channel: 0x%X, type: %c from %s\n",
+					"[serverquery] Good OOB! len: %d, channel: 0x%X, type: %c from %s\n",
 					len,
 					channel,
 					type,
@@ -581,7 +581,7 @@ namespace netfilter
 			}
 
 			DebugWarning(
-				"[spoof] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
+				"[serverquery] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
 				len,
 				channel,
 				type,
