@@ -1,10 +1,7 @@
-# gmsv_serversecure [![Build Status](https://travis-ci.org/danielga/gmsv_serversecure.svg?branch=master)](https://travis-ci.org/danielga/gmsv_serversecure)
+# gmsv_spoof
 
-A module for Garry's Mod that mitigates exploits on the Source engine.
-Based on these plugins from AzuiSleet:
-[serverplugin_serversecure][1]
-[serverplugin_serversecure2][2]
-[serversecure3][3]
+A module for Garry's Mod that allows for modification of A2S_INFO and A2S_PLAYER responses.
+This allows for things such as spoofing of player counts on the master list.
 
 ## Info
 
