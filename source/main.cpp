@@ -1,9 +1,3 @@
-/*
-	gmsv_spoof.dll
-	modified gmsv_serversecure
-	by Matt Walton
-*/
-
 #include <main.hpp>
 #include <netfilter/core.hpp>
 #include <GarrysMod/Lua/Interface.h>
