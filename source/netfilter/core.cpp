@@ -1,5 +1,4 @@
 #include <netfilter/core.hpp>
-#include <netfilter/clientmanager.hpp>
 #include <main.hpp>
 #include <GarrysMod/Lua/Interface.h>
 #include <GarrysMod/Interfaces.hpp>
@@ -138,11 +137,26 @@ namespace netfilter
 		std::string tags;
 	};
 
+	struct player_t
+	{
+		byte index;
+		std::string name;
+		double score;
+		double time;
+	};
+
+	struct player_table
+	{
+		byte count;
+		std::vector<player_t> players;
+	};
+
 	enum PacketType
 	{
 		PacketTypeInvalid = -1,
 		PacketTypeGood,
-		PacketTypeInfo
+		PacketTypeInfo,
+		PacketTypePlayer
 	};
 
 	class CSteamGameServerAPIContext
@@ -237,7 +251,7 @@ namespace netfilter
 	static Hook_recvfrom_t Hook_recvfrom = VCRHook_recvfrom;
 	static SOCKET game_socket = INVALID_SOCKET;
 
-	static bool packet_validation_enabled = false;
+	static bool packet_validation_enabled = true;
 
 	static bool firewall_whitelist_enabled = false;
 	static set_uint32 firewall_whitelist;
@@ -254,15 +268,21 @@ namespace netfilter
 
 	static const char *default_game_version = "16.12.01";
 	static const uint8_t default_proto_version = 17;
-	static bool info_cache_enabled = false;
+	static bool player_spoofing_enabled = false;
+	static int player_spoof_count = 10;
 	static reply_info_t reply_info;
 	static char info_cache_buffer[1024] = { 0 };
 	static bf_write info_cache_packet( info_cache_buffer, sizeof( info_cache_buffer ) );
 	static uint32_t info_cache_last_update = 0;
 	static uint32_t info_cache_time = 5;
 
-	static ClientManager client_manager;
-
+	static char player_cache_buffer[1024] = { 0 };
+	static bf_write player_cache_packet( player_cache_buffer, sizeof( player_cache_buffer ) );
+	static uint32_t player_cache_last_update = 0;
+	static uint32_t player_cache_time = 5;
+	
+	static uint32_t a2s_player_last_send = 0;
+	
 	static const size_t packet_sampling_max_queue = 50;
 	static AtomicBool packet_sampling_enabled( false );
 	static std::deque<packet_t> packet_sampling_queue;
@@ -272,6 +292,8 @@ namespace netfilter
 	static IServerGameDLL *gamedll = nullptr;
 	static IVEngineServer *engine_server = nullptr;
 	static IFileSystem *filesystem = nullptr;
+
+	static player_table game_players;
 
 	static void BuildStaticReplyInfo( )
 	{
@@ -310,7 +332,7 @@ namespace netfilter
 			if( file == nullptr )
 			{
 				reply_info.game_version = default_game_version;
-				DebugWarning( "[ServerSecure] Error opening steam.inf\n" );
+				DebugWarning( "[spoof] Error opening steam.inf\n" );
 				return;
 			}
 
@@ -320,7 +342,7 @@ namespace netfilter
 			if( failed )
 			{
 				reply_info.game_version = default_game_version;
-				DebugWarning( "[ServerSecure] Failed reading steam.inf\n" );
+				DebugWarning( "[spoof] Failed reading steam.inf\n" );
 				return;
 			}
 
@@ -350,7 +372,12 @@ namespace netfilter
 		int32_t appid = engine_server->GetAppID( );
 		info_cache_packet.WriteShort( appid );
 
-		info_cache_packet.WriteByte( global::server->GetNumClients( ) );
+		if (player_spoofing_enabled) {
+			info_cache_packet.WriteByte(player_spoof_count);
+		} else {
+			info_cache_packet.WriteByte( global::server->GetNumClients() );
+		}			
+
 		int32_t maxplayers =
 			sv_visiblemaxplayers != nullptr ? sv_visiblemaxplayers->GetInt( ) : -1;
 		if( maxplayers <= 0 || maxplayers > reply_info.max_clients )
@@ -384,6 +411,28 @@ namespace netfilter
 		info_cache_packet.WriteLongLong( appid );
 	}
 
+	static void BuildPlayerInfo(uint32_t time)
+	{
+		player_cache_packet.Reset();
+		player_cache_packet.WriteLong(-1);
+		player_cache_packet.WriteByte('D');
+
+		player_cache_packet.WriteByte(game_players.count);
+
+		for (int i=0; i<game_players.count; i++) 
+		{
+			game_players.players[i].time += (time - a2s_player_last_send);
+
+			player_t player = game_players.players[i];
+			player_cache_packet.WriteByte(i);
+			player_cache_packet.WriteString(player.name.c_str());
+			player_cache_packet.WriteLong(player.score);
+			player_cache_packet.WriteFloat(player.time);
+		}
+
+		a2s_player_last_send = time;
+	}
+
 	inline PacketType SendInfoCache( const sockaddr_in &from, uint32_t time )
 	{
 		if( time - info_cache_last_update >= info_cache_time )
@@ -404,16 +453,36 @@ namespace netfilter
 		return PacketTypeInvalid; // we've handled it
 	}
 
+	inline PacketType SendPlayerCache(const sockaddr_in &from, uint32_t time)
+	{
+		if (time - player_cache_last_update >= player_cache_time)
+		{
+			BuildPlayerInfo(time);
+			player_cache_last_update = time;
+		}
+
+		sendto(
+			game_socket,
+			reinterpret_cast<char *>( player_cache_packet.GetData( ) ),
+			player_cache_packet.GetNumBytesWritten( ),
+			0,
+			reinterpret_cast<const sockaddr *>( &from ),
+			sizeof( from )
+		);
+		
+		return PacketTypeInvalid;
+	}
+
 	inline PacketType HandleInfoQuery( const sockaddr_in &from )
 	{
 		uint32_t time = static_cast<uint32_t>( globalvars->realtime );
-		if( !client_manager.CheckIPRate( from.sin_addr.s_addr, time ) )
-			return PacketTypeInvalid;
+		return SendInfoCache( from, time );
+	}
 
-		if( info_cache_enabled )
-			return SendInfoCache( from, time );
-
-		return PacketTypeGood;
+	inline PacketType HandlePlayerQuery( const sockaddr_in &from )
+	{
+		uint32_t time = static_cast<uint32_t>( globalvars->realtime );
+		return SendPlayerCache( from, time );
 	}
 
 	inline const char *IPToString( const in_addr &addr )
@@ -432,7 +501,7 @@ namespace netfilter
 		if( len == 0 )
 		{
 			DebugWarning(
-				"[ServerSecure] Bad OOB! len: %d from %s\n",
+				"[spoof] Bad OOB! len: %d from %s\n",
 				len,
 				IPToString( from.sin_addr )
 			);
@@ -446,7 +515,7 @@ namespace netfilter
 		if( channel == -2 )
 		{
 			DebugWarning(
-				"[ServerSecure] Bad OOB! len: %d, channel: 0x%X from %s\n",
+				"[spoof] Bad OOB! len: %d, channel: 0x%X from %s\n",
 				len,
 				channel,
 				IPToString( from.sin_addr )
@@ -467,7 +536,7 @@ namespace netfilter
 				if( len > 100 )
 				{
 					DebugWarning(
-						"[ServerSecure] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
+						"[spoof] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
 						len,
 						channel,
 						type,
@@ -479,7 +548,7 @@ namespace netfilter
 				if( len >= 18 && strncmp( data + 5, "statusResponse", 14 ) == 0 )
 				{
 					DebugWarning(
-						"[ServerSecure] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
+						"[spoof] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
 						len,
 						channel,
 						type,
@@ -495,13 +564,14 @@ namespace netfilter
 					PacketTypeInfo : PacketTypeInvalid;
 
 			case 'U': // player info request
+				return PacketTypePlayer;
 			case 'V': // rules request
 				return len == 9 ? PacketTypeGood : PacketTypeInvalid;
 
 			case 'q': // connection handshake init
 			case 'k': // steam auth packet
 				DebugMsg(
-					"[ServerSecure] Good OOB! len: %d, channel: 0x%X, type: %c from %s\n",
+					"[spoof] Good OOB! len: %d, channel: 0x%X, type: %c from %s\n",
 					len,
 					channel,
 					type,
@@ -511,7 +581,7 @@ namespace netfilter
 			}
 
 			DebugWarning(
-				"[ServerSecure] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
+				"[spoof] Bad OOB! len: %d, channel: 0x%X, type: %c from %s\n",
 				len,
 				channel,
 				type,
@@ -523,18 +593,6 @@ namespace netfilter
 		return type == 'T' ? PacketTypeInfo : PacketTypeGood;
 	}
 
-	inline bool IsAddressAllowed( const sockaddr_in &addr )
-	{
-		return
-			(
-				!firewall_whitelist_enabled ||
-				firewall_whitelist.find( addr.sin_addr.s_addr ) != firewall_whitelist.end( )
-				) &&
-				(
-					!firewall_blacklist_enabled ||
-					firewall_blacklist.find( addr.sin_addr.s_addr ) == firewall_blacklist.end( )
-					);
-	}
 
 	inline int32_t HandleNetError( int32_t value )
 	{
@@ -592,12 +650,12 @@ namespace netfilter
 			packet_sampling_queue.push_back( p );
 		}
 
-		if( !IsAddressAllowed( infrom ) )
-			return -1;
-
 		PacketType type = ClassifyPacket( buf, len, infrom );
 		if( type == PacketTypeInfo )
 			type = HandleInfoQuery( infrom );
+
+		if ( type == PacketTypePlayer)
+			type = HandlePlayerQuery(infrom);
 
 		if( type == PacketTypeInvalid )
 			return -1;
@@ -711,143 +769,48 @@ namespace netfilter
 			VCRHook_recvfrom = Hook_recvfrom;
 	}
 
-	LUA_FUNCTION_STATIC( EnableFirewallWhitelist )
+
+	LUA_FUNCTION_STATIC( EnablePlayerSpoofing )
 	{
 		LUA->CheckType( 1, GarrysMod::Lua::Type::BOOL );
-		firewall_whitelist_enabled = LUA->GetBool( 1 );
-		SetReceiveDetourStatus( firewall_whitelist_enabled );
-		return 0;
-	}
-
-	// Whitelisted IPs bytes need to be in network order (big endian)
-	LUA_FUNCTION_STATIC( AddWhitelistIP )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::NUMBER );
-		firewall_whitelist.insert( static_cast<uint32_t>( LUA->GetNumber( 1 ) ) );
-		return 0;
-	}
-
-	LUA_FUNCTION_STATIC( RemoveWhitelistIP )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::NUMBER );
-		firewall_whitelist.erase( static_cast<uint32_t>( LUA->GetNumber( 1 ) ) );
-		return 0;
-	}
-
-	LUA_FUNCTION_STATIC( ResetWhitelist )
-	{
-		set_uint32( ).swap( firewall_whitelist );
-		return 0;
-	}
-
-	LUA_FUNCTION_STATIC( EnableFirewallBlacklist )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::BOOL );
-		firewall_blacklist_enabled = LUA->GetBool( 1 );
-		SetReceiveDetourStatus( firewall_blacklist_enabled );
-		return 0;
-	}
-
-	// Blacklisted IPs bytes need to be in network order (big endian)
-	LUA_FUNCTION_STATIC( AddBlacklistIP )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::NUMBER );
-		firewall_blacklist.insert( static_cast<uint32_t>( LUA->GetNumber( 1 ) ) );
-		return 0;
-	}
-
-	LUA_FUNCTION_STATIC( RemoveBlacklistIP )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::NUMBER );
-		firewall_blacklist.erase( static_cast<uint32_t>( LUA->GetNumber( 1 ) ) );
-		return 0;
-	}
-
-	LUA_FUNCTION_STATIC( ResetBlacklist )
-	{
-		set_uint32( ).swap( firewall_blacklist );
-		return 0;
-	}
-
-	LUA_FUNCTION_STATIC( EnablePacketValidation )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::BOOL );
-		packet_validation_enabled = LUA->GetBool( 1 );
-		SetReceiveDetourStatus( packet_validation_enabled );
-		return 0;
-	}
-
-	LUA_FUNCTION_STATIC( EnableThreadedSocket )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::BOOL );
-		threaded_socket_enabled = LUA->GetBool( 1 );
+		player_spoofing_enabled = LUA->GetBool( 1 );
+		threaded_socket_enabled = player_spoofing_enabled;
 		SetReceiveDetourStatus( threaded_socket_enabled );
 		return 0;
 	}
 
-	LUA_FUNCTION_STATIC( EnableInfoCache )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::BOOL );
-		info_cache_enabled = LUA->GetBool( 1 );
-		return 0;
-	}
-
-	LUA_FUNCTION_STATIC( SetInfoCacheTime )
+	LUA_FUNCTION_STATIC( SetPlayerCount )
 	{
 		LUA->CheckType( 1, GarrysMod::Lua::Type::NUMBER );
-		info_cache_time = static_cast<uint32_t>( LUA->GetNumber( 1 ) );
+		player_spoof_count = static_cast<uint32_t>( LUA->GetNumber( 1 ) );
 		return 0;
 	}
 
-	LUA_FUNCTION_STATIC( RefreshInfoCache )
+	LUA_FUNCTION_STATIC( ResetPlayerList )
 	{
-		BuildStaticReplyInfo( );
-		BuildReplyInfo( );
+		game_players.players.clear();
+		game_players.count = 0;
 		return 0;
 	}
 
-	LUA_FUNCTION_STATIC( EnableQueryLimiter )
+	LUA_FUNCTION_STATIC( AddPlayer )
 	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::BOOL );
-		client_manager.SetState( LUA->GetBool( 1 ) );
-		return 0;
-	}
+		player_t player;
 
-	LUA_FUNCTION_STATIC( SetMaxQueriesWindow )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::NUMBER );
-		client_manager.SetMaxQueriesWindow( static_cast<uint32_t>( LUA->GetNumber( 1 ) ) );
-		return 0;
-	}
+		LUA->CheckType(1, GarrysMod::Lua::Type::STRING);
+		player.name = LUA->GetString(1);
 
-	LUA_FUNCTION_STATIC( SetMaxQueriesPerSecond )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::NUMBER );
-		client_manager.SetMaxQueriesPerSecond( static_cast<uint32_t>( LUA->GetNumber( 1 ) ) );
-		return 0;
-	}
+		LUA->CheckType(2, GarrysMod::Lua::Type::NUMBER);
+		player.score = LUA->GetNumber(2);
 
-	LUA_FUNCTION_STATIC( SetGlobalMaxQueriesPerSecond )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::NUMBER );
-		client_manager.SetGlobalMaxQueriesPerSecond(
-			static_cast<uint32_t>( LUA->GetNumber( 1 ) )
-		);
-		return 0;
-	}
+		LUA->CheckType(3, GarrysMod::Lua::Type::NUMBER);
+		player.time = LUA->GetNumber(3);
 
-	LUA_FUNCTION_STATIC( EnablePacketSampling )
-	{
-		LUA->CheckType( 1, GarrysMod::Lua::Type::BOOL );
-
-		packet_sampling_enabled = LUA->GetBool( 1 );
-		if( !packet_sampling_enabled )
-		{
-			AUTO_LOCK( packet_sampling_mutex );
-			packet_sampling_queue.clear( );
-		}
+		game_players.players.push_back(player);
+		game_players.count = game_players.players.size();
 
 		return 0;
+
 	}
 
 	inline packet_t GetSamplePacket( )
@@ -861,18 +824,7 @@ namespace netfilter
 		packet_sampling_queue.pop_front( );
 		return p;
 	}
-
-	LUA_FUNCTION_STATIC( GetSamplePacket )
-	{
-		packet_t p = GetSamplePacket( );
-		if( p.address.sin_addr.s_addr == 0 )
-			return 0;
-
-		LUA->PushNumber( p.address.sin_addr.s_addr );
-		LUA->PushNumber( p.address.sin_port );
-		LUA->PushString( &p.buffer[0], p.buffer.size( ) );
-		return 3;
-	}
+	
 
 	void Initialize( GarrysMod::Lua::ILuaBase *LUA )
 	{
@@ -991,62 +943,17 @@ namespace netfilter
 
 		BuildStaticReplyInfo( );
 
-		LUA->PushCFunction( EnableFirewallWhitelist );
-		LUA->SetField( -2, "EnableFirewallWhitelist" );
+		LUA->PushCFunction( EnablePlayerSpoofing );
+		LUA->SetField( -2, "SetEnabled" );
 
-		LUA->PushCFunction( AddWhitelistIP );
-		LUA->SetField( -2, "AddWhitelistIP" );
+		LUA->PushCFunction( SetPlayerCount );
+		LUA->SetField( -2, "SetPlayerCount" );
 
-		LUA->PushCFunction( RemoveWhitelistIP );
-		LUA->SetField( -2, "RemoveWhitelistIP" );
+		LUA->PushCFunction(ResetPlayerList);
+		LUA->SetField(-2, "ResetPlayers");
 
-		LUA->PushCFunction( ResetWhitelist );
-		LUA->SetField( -2, "ResetWhitelist" );
-
-		LUA->PushCFunction( EnableFirewallBlacklist );
-		LUA->SetField( -2, "EnableFirewallBlacklist" );
-
-		LUA->PushCFunction( AddBlacklistIP );
-		LUA->SetField( -2, "AddBlacklistIP" );
-
-		LUA->PushCFunction( RemoveBlacklistIP );
-		LUA->SetField( -2, "RemoveBlacklistIP" );
-
-		LUA->PushCFunction( ResetBlacklist );
-		LUA->SetField( -2, "ResetBlacklist" );
-
-		LUA->PushCFunction( EnablePacketValidation );
-		LUA->SetField( -2, "EnablePacketValidation" );
-
-		LUA->PushCFunction( EnableThreadedSocket );
-		LUA->SetField( -2, "EnableThreadedSocket" );
-
-		LUA->PushCFunction( EnableInfoCache );
-		LUA->SetField( -2, "EnableInfoCache" );
-
-		LUA->PushCFunction( SetInfoCacheTime );
-		LUA->SetField( -2, "SetInfoCacheTime" );
-
-		LUA->PushCFunction( RefreshInfoCache );
-		LUA->SetField( -2, "RefreshInfoCache" );
-
-		LUA->PushCFunction( EnableQueryLimiter );
-		LUA->SetField( -2, "EnableQueryLimiter" );
-
-		LUA->PushCFunction( SetMaxQueriesWindow );
-		LUA->SetField( -2, "SetMaxQueriesWindow" );
-
-		LUA->PushCFunction( SetMaxQueriesPerSecond );
-		LUA->SetField( -2, "SetMaxQueriesPerSecond" );
-
-		LUA->PushCFunction( SetGlobalMaxQueriesPerSecond );
-		LUA->SetField( -2, "SetGlobalMaxQueriesPerSecond" );
-
-		LUA->PushCFunction( EnablePacketSampling );
-		LUA->SetField( -2, "EnablePacketSampling" );
-
-		LUA->PushCFunction( GetSamplePacket );
-		LUA->SetField( -2, "GetSamplePacket" );
+		LUA->PushCFunction(AddPlayer);
+		LUA->SetField(-2, "AddPlayer");
 	}
 
 	void Deinitialize( GarrysMod::Lua::ILuaBase * )

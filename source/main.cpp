@@ -1,6 +1,5 @@
 #include <main.hpp>
 #include <netfilter/core.hpp>
-#include <filecheck.hpp>
 #include <GarrysMod/Lua/Interface.h>
 #include <scanning/symbolfinder.hpp>
 #include <iserver.h>
@@ -66,26 +65,20 @@ namespace global
 
 		LUA->CreateTable( );
 
-		LUA->PushString( "serversecure 1.5.17" );
-		LUA->SetField( -2, "Version" );
-
-		// version num follows LuaJIT style, xxyyzz
-		LUA->PushNumber( 10517 );
-		LUA->SetField( -2, "VersionNum" );
-
 		LUA->PushCFunction( GetClientCount );
 		LUA->SetField( -2, "GetClientCount" );
 	}
 
 	static void Initialize( GarrysMod::Lua::ILuaBase *LUA )
 	{
-		LUA->SetField( GarrysMod::Lua::INDEX_GLOBAL, "serversecure" );
+		DebugMsg("[spoof]: Initialising player spoofer\n");
+		LUA->SetField( GarrysMod::Lua::INDEX_GLOBAL, "spoof" );
 	}
 
 	static void Deinitialize( GarrysMod::Lua::ILuaBase *LUA )
 	{
 		LUA->PushNil( );
-		LUA->SetField( GarrysMod::Lua::INDEX_GLOBAL, "serversecure" );
+		LUA->SetField( GarrysMod::Lua::INDEX_GLOBAL, "spoof" );
 	}
 }
 
@@ -93,14 +86,12 @@ GMOD_MODULE_OPEN( )
 {
 	global::PreInitialize( LUA );
 	netfilter::Initialize( LUA );
-	filecheck::Initialize( LUA );
 	global::Initialize( LUA );
 	return 1;
 }
 
 GMOD_MODULE_CLOSE( )
 {
-	filecheck::Deinitialize( LUA );
 	netfilter::Deinitialize( LUA );
 	global::Deinitialize( LUA );
 	return 0;
