@@ -1,3 +1,12 @@
+# Licensing information
+
+Contributions made prior to commit 4713442 are considered to be
+licensed under the BSD license found in [notices/LICENSE-GMSV_SERVERSECURE.txt](/notices/LICENSE-GMSV_SERVERSECURE.txt)
+
+Contribution 4713442 is owned by Omar Saleh Assadi and Alexander Johnson
+under shared exclusive rights. All other commits since then should be considered to be under the license found in the
+[notices/LICENSE.md](/notices/LICENSE.md) file—unless specified otherwise.
+
 # gmsv_serversecure [![Build Status](https://travis-ci.org/danielga/gmsv_serversecure.svg?branch=master)](https://travis-ci.org/danielga/gmsv_serversecure)
 
 A module for Garry's Mod that mitigates exploits on the Source engine.
